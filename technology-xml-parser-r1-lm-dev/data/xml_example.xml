@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xn:configData xmlns:xn="http://www.3gpp.org/ftp/specs/archive/32_series/32.625#configData">
+  <xn:SubNetwork id="SubNetwork=ONRM_ROOT_MO,SubNetwork=VRF_Public_MPLS,SubNetwork=MPLS_TNL_SN">
+    <xn:MeContext id="MeContext=SN_MPLS_TNL_0001">
+      <xn:ManagedElement id="ManagedElement=389420011">
+        <xn:VsDataContainer id="VsDataContainer=1">
+          <xn:attributes>
+            <es:vsDataSystemFunctions>MME, PGW, SGW</es:vsDataSystemFunctions>
+            <xn:vsDataFormatVersion>1.0</xn:vsDataFormatVersion>
+            <xn:vsDataType>vsDataNeSw</xn:vsDataType>
+          </xn:attributes>
+          <xn:VsDataContainer id="VsDataContainer=2">
+            <xn:attributes>
+              <es:vsDataSwInventory>
+                <es:vsDataSwItem>
+                  <es:swItemId>1</es:swItemId>
+                  <es:additionalInfo>Additional Info 1</es:additionalInfo>
+                  <es:administrativeData>
+                    <es:type>Software type 1</es:type>
+                    <es:description>Software description 1</es:description>
+                    <es:productName>Product name 1</es:productName>
+                    <es:productNumber>12345</es:productNumber>
+                    <es:productRevision>1.1</es:productRevision>
+                    <es:productionDate>2024-10-19</es:productionDate>
+                  </es:administrativeData>
+                </es:vsDataSwItem>
+              </es:vsDataSwInventory>
+              <xn:vsDataFormatVersion>1.1</xn:vsDataFormatVersion>
+              <xn:vsDataType>vsDataSwItm</xn:vsDataType>
+            </xn:attributes>
+            <xn:VsDataContainer id="VsDataContainer=3">
+              <xn:attributes>
+                <xn:vsDataFormatVersion>1.2</xn:vsDataFormatVersion>
+                <xn:vsDataType>vsDataSwVer</xn:vsDataType>
+              </xn:attributes>
+            </xn:VsDataContainer>
+          </xn:VsDataContainer>
+        </xn:VsDataContainer>
+      </xn:ManagedElement>
+    </xn:MeContext>
+  </xn:SubNetwork>
+</xn:configData>

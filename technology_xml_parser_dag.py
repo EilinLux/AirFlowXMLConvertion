@@ -1,213 +1,152 @@
-
-
 """
-author: Eilin Lux
-email: eilinlux@gmail.com
-
+Author: Eilin Lux
+Email: eilinlux@gmail.com
+Description: This Airflow DAG processes XML files from Google Cloud Storage (GCS),
+             flattens them based on technology (2G, 3G, 4G, 5G), and saves 
+             the processed data as Parquet files back into GCS using a PySpark job 
+             running on a Dataproc cluster. Configuration is loaded from airflow.cfg.
 """
-
 
 import datetime
 from airflow import models
-from airflow.contrib.operators import dataproc_operator
+from airflow.models import Variable
+from airflow.providers.google.cloud.operators.dataproc import (
+    DataprocCreateClusterOperator,
+    DataprocSubmitJobOperator,
+    DataprocDeleteClusterOperator,
+)
 from airflow.utils import trigger_rule
+from airflow.configuration import conf
 
+##########################################################
+# Get configuration from airflow.cfg and Airflow Variables
+##########################################################
 
-#############################################
-######## DAG VARIABLES ######################
-#############################################
+PROJECT_ID = Variable.get("project_id")
+REGION = Variable.get("region")
+LOCAL_MARKETS = Variable.get("local_markets")
+ENVIRONMENT = Variable.get("environment_type")
+TECHNOLOGIES = Variable.get("technologies")
+GOAL = Variable.get("goal")
+SCHEDULE_INTERVAL = Variable.get("schedule_interval")
+LABELS = Variable.get("labels")
+DEFAULT_DAG_ARGS = conf.getsection('DAG_DEFAULT')
+DATAPROC_PYSPARK_JARS = Variable.get("dataproc_pyspark_jars")
 
+##########################################################
+# Dates for processing (defaults to yesterday)
+##########################################################
 
-######## Local Market & Technologies  #####################################
-lms = "es"
-techs = "4G,5G,2G"
+YEAR = datetime.datetime.today().year
+MONTH = datetime.datetime.today().month
+DAY = datetime.datetime.today().day
+START_DATE = f"{YEAR}{MONTH}{DAY-1}"
+END_DATE = f"{YEAR}{MONTH}{DAY}"
 
-######## time variables #####################################
-year = datetime.datetime.today().year
-month = datetime.datetime.today().month
-day = datetime.datetime.today().day
-start = f"{year}{month}{day-1}" # TODO decide how often should it run 
-end = f"{year}{month}{day}"
+##########################################################
+# --- Construct DAG and cluster names ---
+##########################################################
 
-
-
-### TO BE CUSTUMIZED
-#############################################
-lm = "" 
-environment_type = "" # ex. dev, prod, qa
-release="" # r1, r2, etc.
-goal =  "technology-xml-parser"
-dag_name = '{}-{}-{}-{}'.format(goal,release, lm, environment_type)
-cluster_name='{}-target-{}-{}-{}'.format(goal,year, month, day)
-DAGS_FOLDER = ""
-
-
-### [Required] Storage bucket specifications (where the code is saved)
-#############################################
-storage_bucket='bucket-{}-type-{}'.format(lm, environment_type) ##TOBEREPLACED
-code_files = 'gs://{}/folder-name/{}'.format(storage_bucket, dag_name) ##TOBEREPLACED
-
-
-# [Required] The Hadoop Compatible Filesystem (HCFS) URI of the main Python file to use as the driver. Must be a .py file.
-run_main='{}/{}_main.py'.format(code_files, goal.replace("-","_")) 
-
-
-# [NOT Required] Cloud Storage specifications (not mandatory)
-# List of Python files to pass to the PySpark framework. Supported file types: .py, .egg, and .zip
-# notice it will unpack without extracting the file in an omonimous folder, therefore be careful on the imports. 
-# run_pyfiles=[
-#             '{}/utils/transform.py'.format(code_files),
-#             '{}/utils/read.py'.format(code_files),
-#             '{}/utils/write.py'.format(code_files)
-#             ]
-
-
-### [Required] dataproc cluster specifications ##TOBEREPLACED
-#############################################
-subnetwork_uri='projects/project-{}-type-{}/regions/europe-west1/subnetworks/{}'.format(lm, environment_type,"-subnetwork-name" ) ##TOBEREPLACED
-project_id = 'project-{}-type-{}'.format(lm,environment_type) ##TOBEREPLACED
-service_account= 'sa@project-name.iam.gserviceaccount.com' ##TOBEREPLACED
-
-spark_config_jar = 'gs://project-{}-type-{}/spark-xml/spark-xml_2.12-0.14.0.jar'.format(lm,environment_type) ##TOBEREPLACED
-dataproc_pyspark_jars_list = ['gs://spark-lib/bigquery/spark-bigquery-latest_2.12.jar', spark_config_jar]
+DAG_NAME = f"{GOAL}-{LOCAL_MARKETS}-{ENVIRONMENT}"
+CLUSTER_NAME = f"{GOAL}-target-{YEAR}-{MONTH}-{DAY}"
 
 
 
-region='europe-west1'
-zone='europe-west1-b'
-image_version ='1.5.53-debian10'
-master_machine_type='e2-standard-32'
-master_disk_size = 800
-worker_machine_type='e2-standard-32'
-worker_disk_size = 800
-num_workers=20
-num_preemptible_workers = 0 # num-secondary-workers more info: https://cloud.google.com/dataproc/docs/concepts/compute/secondary-vms
-idle_delete_ttl = 14400 # max-idle seconds equals to 14 h NEVER USE A STRING 
+##########################################################
+# --- Storage bucket where code is stored ---
+##########################################################
+
+STORAGE_BUCKET = f"bucket-{LOCAL_MARKETS}-type-{ENVIRONMENT}"
+CODE_FILES_FOLDER = f"gs://{STORAGE_BUCKET}/folder-name/{DAG_NAME}"
+MAIN_PYTHON_FILE = f"{CODE_FILES_FOLDER}/{GOAL.replace('-','_')}_main.py"
+
+##########################################################
+# --- Task IDs ---
+##########################################################
+CREATE_CLUSTER_TASK_ID = f"create_cluster_{DAG_NAME.replace('-','_')}"
+RUN_PYSPARK_JOB_TASK_ID = f"run_pyspark_job_{DAG_NAME.replace('-','_')}"
+DELETE_CLUSTER_TASK_ID = f"delete_cluster_{DAG_NAME.replace('-','_')}"
 
 
-### Task ids specifications 
-#############################################
-create_task_id='create_cluster_{}'.format(dag_name.replace("-","_"))
-run_task_id = 'run_pyspark_job_{}'.format(dag_name.replace("-","_"))
-delete_task_id='delete_cluster_{}'.format(dag_name.replace("-","_"))
+# ---------------------------------------------
+# --- DAG Definition ---
+# ---------------------------------------------
+with models.DAG(DAG_NAME, schedule_interval=SCHEDULE_INTERVAL, default_args=DEFAULT_DAG_ARGS) as dag:
+    # Create Dataproc cluster
+    create_cluster = DataprocCreateClusterOperator(
+        task_id=CREATE_CLUSTER_TASK_ID,
+        project_id=PROJECT_ID,
+        cluster_name=CLUSTER_NAME,
+        region=REGION,
+        storage_bucket=STORAGE_BUCKET,
+        labels=LABELS,
+        tags=[
+            "allow-internal-dataproc-proda",
+            "allow-ssh-from-management-zone",
+            "allow-ssh-from-net-to-bastion",
+        ],
 
-# Scheduler interval
-#############################################
-schedule_interval='0 0 5 * *'
-
-## labeling 
-#############################################
-labels = {
-        "cluster-goal":"dev", #  ex. dev, prod, qa
-        "use-case":"technology", # TOBEREPLACED
-        "cluster-owner":"eilinlux-gmail_com", # TOBEREPLACED
-        "team-tag":"DataEngineer" # TOBEREPLACED
-         }
-
-
-#############################################
-######## DAG DEFAULT ########################
-#############################################
-default_dag_args = {
-    'start_date': datetime.datetime(2015, 12, 1),
-    'email_on_failure': False,
-    'email_on_retry': False,
-    'retries': 0,
-    'retry_delay': datetime.timedelta(minutes=5),
-    'project_id': project_id,
-    'year':year,
-    'month':month,
-    'day':day,
-    'code_files':code_files
-}
+        master_machine_type = Variable.get("master_machine_type")
+        master_disk_size = int(Variable.get("master_disk_size"))  # Convert to integer
+        num_workers = int(Variable.get("num_workers"))  # Convert to integer
+        worker_machine_type = Variable.get("worker_machine_type")
+        worker_disk_size = int(Variable.get("worker_disk_size"))  # Convert to integer
+        num_preemptible_workers = int(Variable.get("num_preemptible_workers"))  # Convert to integer
+        image_version = Variable.get("image_version")
+        idle_delete_ttl = int(Variable.get("idle_delete_ttl"))  # Convert to integer
 
 
-#############################################
-######## DAG MODEL ##########################
-#############################################
-
-with models.DAG(
-        dag_name,
-        schedule_interval=schedule_interval,
-        default_args=default_dag_args
-        ) as dag:
-    
-    # override cluster creation to enable getway component
-    class CustomDataprocClusterCreateOperator(dataproc_operator.DataprocClusterCreateOperator):
-        def __init__(self, *args, **kwargs):
-            super(CustomDataprocClusterCreateOperator, self).__init__(*args, **kwargs)
-        def _build_cluster_data(self):
-            cluster_data = super(CustomDataprocClusterCreateOperator, self)._build_cluster_data()
-            cluster_data['config']['endpointConfig'] = {
-            'enableHttpPortAccess': True
-            }
-            cluster_data['config']['softwareConfig']['optionalComponents'] = [ 'JUPYTER', 'ANACONDA' ]
-            return cluster_data
-
-    #Create features creation Dataproc cluster.
-    create_cluster_task = CustomDataprocClusterCreateOperator(
-        task_id=create_task_id,
-        project_id=project_id,
-        cluster_name=cluster_name,
-        storage_bucket=storage_bucket,
-        region=region, 
-        zone=zone,
-        service_account=service_account,
-        subnetwork_uri=subnetwork_uri,
-        labels=labels, 
-        tags=['allow-internal-dataproc-proda', 'allow-ssh-from-management-zone','allow-ssh-from-net-to-bastion'],
-        master_machine_type=master_machine_type,
-        # master_disk_type='pd-standard',
-        master_disk_size=master_disk_size,
-        num_workers=num_workers,
-        worker_machine_type=worker_machine_type,
-        # worker_disk_type='pd-standard',
-        worker_disk_size=worker_disk_size,
-        num_preemptible_workers=num_preemptible_workers,
-        image_version=image_version,
-        idle_delete_ttl=idle_delete_ttl,
         internal_ip_only=True,
-        metadata= {'enable-oslogin': 'true'}, 
-        #  [('enable-oslogin', 'true'),
-        # ('PIP_PACKAGES','google-cloud')
-        # ], 
-        # notice migrating to airFlow 1.0 to 2.0 need to change {'enable-oslogin': 'true'}, https://stackoverflow.com/questions/70423687/facing-issue-with-dataproccreateclusteroperator-airflow-2-0
+        metadata={"enable-oslogin": "true"},
         properties={
-            'core:fs.gs.implicit.dir.repair.enable':'false', 
-            'core:fs.gs.status.parallel.enable':'true',
-            'dataproc:dataproc.logging.stackdriver.job.driver.enable':'true', 
-            'yarn:yarn.nodemanager.resource.memory-mb':'118000', 'yarn:yarn.nodemanager.resource.cpu-vcores':'30',
-            'yarn:yarn.nodemanager.pmem-check-enabled':'false', 'yarn:yarn.nodemanager.vmem-check-enabled':'false', 
-            'dataproc:am.primary_only':'true', 
-            'spark:spark.yarn.am.cores':'5', 'spark:spark.yarn.am.memory':'40g', # if memory error increase here
-            'spark:spark.jars' : spark_config_jar,
-            }
-        )
-      
-    run_job_task = dataproc_operator.DataProcPySparkOperator(
-        task_id=run_task_id,
-        main=run_main,
-        # pyfiles=run_pyfiles,
-        cluster_name=cluster_name,
-        region=region,
-        arguments=[ 
-        '--StartDate', str(start),
-        '--EndDate',  str(end),
-        '--lm', str(lms),
-        '--techs',  str(techs),        
-         ],
-        dataproc_pyspark_jars = dataproc_pyspark_jars_list
+            "core:fs.gs.implicit.dir.repair.enable": "false",
+            "core:fs.gs.status.parallel.enable": "true",
+            "dataproc:dataproc.logging.stackdriver.job.driver.enable": "true",
+            "yarn:yarn.nodemanager.resource.memory-mb": "118000",
+            "yarn:yarn.nodemanager.resource.cpu-vcores": "30",
+            "yarn:yarn.nodemanager.pmem-check-enabled": "false",
+            "yarn:yarn.nodemanager.vmem-check-enabled": "false",
+            "dataproc:am.primary_only": "true",
+            "spark:spark.yarn.am.cores": "5",
+            "spark:spark.yarn.am.memory": "40g",
+            "spark:spark.jars": Variable.get("spark_config_jar"),
+        },
     )
 
-    #Delete Cloud Dataproc cluster.
-    delete_cluster_task = dataproc_operator.DataprocClusterDeleteOperator(
-       task_id=delete_task_id,
-       cluster_name=cluster_name,
-       region=region, 
-       trigger_rule=trigger_rule.TriggerRule.ALL_DONE
+    # Define PySpark job
+    pyspark_job = {
+        "reference": {"project_id": PROJECT_ID},
+        "placement": {"cluster_name": CLUSTER_NAME},
+        "pyspark_job": {
+            "main_python_file_uri": MAIN_PYTHON_FILE,
+            "jar_file_uris": Variable.get("dataproc_pyspark_jars"),
+            "args": [
+                "--StartDate",
+                START_DATE,
+                "--EndDate",
+                END_DATE,
+                "--lm",
+                LOCAL_MARKETS,
+            ],
+        },
+    }
+
+    # Submit PySpark job
+    run_job = DataprocSubmitJobOperator(
+        task_id=RUN_PYSPARK_JOB_TASK_ID,
+        job=pyspark_job,
+        region=REGION,
+        project_id=PROJECT_ID,
     )
 
-    # Define DAG dependencies.
-    create_cluster_task >> run_job_task >> delete_cluster_task 
+    # Delete Dataproc cluster
+    delete_cluster = DataprocDeleteClusterOperator(
+        task_id=DELETE_CLUSTER_TASK_ID,
+        project_id=PROJECT_ID,
+        cluster_name=CLUSTER_NAME,
+        region=REGION,
+        trigger_rule=trigger_rule.TriggerRule.ALL_DONE,
+    )
 
-      
+    # Define DAG dependencies
+    (create_cluster >> run_job >> delete_cluster)

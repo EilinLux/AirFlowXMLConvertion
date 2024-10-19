@@ -1,0 +1,119 @@
+gcs:
+  BUCKET_NAME: "vfgned-dh-{}-upm-landing"  # TOBEREPLACE
+  BUCKET_OUTPUT: "gs://vfgned-dh-nwp-modeloutput/xml-parser/es/"
+
+spark:
+  SPARK_JARS: "../spark-xml/spark-xml_2.12-0.12.0.jar"  # TOBEREPLACE
+
+
+tech_prefixes:
+  2G: "IM/provider/2G/enmranbar1"
+  3G: "IM/provider/3G/enmranleg1"
+  4G: "IM/provider/4G/"  # No tech_prefix for 4G
+  5G: "IM/provider/5G/enmtbl1" 
+
+
+xml_config:
+  rowTag: configData  # You can change this if needed
+
+output_config:
+  output_prefix: "parquet_data"  # Add an output prefix if desired
+  save_mode: "overwrite"  # or "append", "ignore", "errorifexists"
+
+
+
+flattening_config:
+  example_xml: # Replace with the actual technology key (e.g., 2G, 3G)
+    - operation: explode
+      column: "data.item"
+      alias: "item"
+    - operation: select
+      columns:
+        "item.value": "value"
+        "item._id": "id"  # Assuming 'id' is an attribute of <item>
+    - operation: filter
+      condition: "value > 50"
+    - operation: join
+      on: "id"
+      how: "left_outer"
+    - operation: orderBy
+      columns:
+        col1: True  # Ascending
+        col2: False # Descending
+    - operation: distinct
+    - operation: withColumn
+      column: new_col
+      value: "new value"  # Add a literal value
+    - operation: withColumn
+      column: calculated_col
+      func: "col('col1') * 2"  # Evaluate an expression
+    - operation: groupBy
+      columns: ["col1", "col2"]
+    - operation: agg
+      aggregations:
+        sum_col3: sum(col3)
+        avg_col4: avg(col4)
+
+  5G:
+    - operation: select
+      columns:
+        "xn:SubNetwork._id": "SubNetworkId"
+    - operation: explode
+      column: "xn:SubNetwork.xn:MeContext"
+      alias: "MeContext"
+    - operation: select
+      columns:
+        "SubNetworkId": "SubNetworkId"
+        "MeContext._id": "MeContextId"
+        "MeContext.xn:ManagedElement._id": "ManagedElementId"
+        "MeContext.xn:ManagedElement.xn:VsDataContainer._id": "ParentVsDataContainerId"
+        "MeContext.xn:ManagedElement.xn:VsDataContainer.*": "xn:VsDataContainer"
+    - operation: select
+      columns:
+        "SubNetworkId": "SubNetworkId"
+        "ManagedElementId": "ManagedElementId"
+        "ParentVsDataContainerId": "ParentVsDataContainerId"
+        "xn:VsDataContainer.*": "xn:VsDataContainer"
+        "xn:attributes.es:vsDataSystemFunctions": "ParentvsDataSystemFunctions"
+        "xn:attributes.xn:vsDataFormatVersion": "ParentvsDataFormatVersion"
+        "xn:attributes.xn:vsDataType": "ParentvsDataType"
+    - operation: select
+      columns:
+        "SubNetworkId": "SubNetworkId"
+        "ManagedElementId": "ManagedElementId"
+        "ParentVsDataContainerId": "ParentVsDataContainerId"
+        "ParentvsDataSystemFunctions": "ParentvsDataSystemFunctions"
+        "ParentvsDataFormatVersion": "ParentvsDataFormatVersion"
+        "ParentvsDataType": "ParentvsDataType"
+        "_id": "MiddleVsDataContainerId"
+        "xn:attributes.es:vsDataSwInventory": "MiddlevsDataSwInventory"
+        "xn:attributes.xn:vsDataFormatVersion": "MiddlevsDataFormatVersion"
+        "xn:attributes.xn:vsDataType": "MiddlevsDataType"
+    - operation: explode
+      column: "xn:VsDataContainer"
+      alias: "col"
+    - operation: select
+      columns:
+        "SubNetworkId": "SubNetworkId"
+        "ManagedElementId": "ManagedElementId"
+        "ParentVsDataContainerId": "ParentVsDataContainerId"
+        "ParentvsDataSystemFunctions": "ParentvsDataSystemFunctions"
+        "ParentvsDataFormatVersion": "ParentvsDataFormatVersion"
+        "ParentvsDataType": "ParentvsDataType"
+        "MiddleVsDataContainerId": "MiddleVsDataContainerId"
+        "MiddlevsDataSwInventory": "MiddlevsDataSwInventory"
+        "MiddlevsDataFormatVersion": "MiddlevsDataFormatVersion"
+        "MiddlevsDataType": "MiddlevsDataType"
+        "col._id": "ChildVsDataContainerId"
+        "col.xn:attributes.xn:vsDataType": "ChildVsDataType"
+        "col.xn:attributes.xn:vsDataFormatVersion": "ChildVsDataFormatVersion"
+        "col.xn:attributes.es:vsDataSwItem.es:additionalInfo": "vsDataSwItemAdditionalInfo"
+        "col.xn:attributes.es:vsDataSwItem.es:administrativeData.es:type": "vsDataSwItemType"
+        "col.xn:attributes.es:vsDataSwItem.es:administrativeData.es:description": "vsDataSwItemDescription"
+        "col.xn:attributes.es:vsDataSwItem.es:administrativeData.es:productName": "vsDataSwItemProductName"
+        "col.xn:attributes.es:vsDataSwItem.es:administrativeData.es:productNumber": "vsDataSwItemProductNumber"
+        "col.xn:attributes.es:vsDataSwItem.es:administrativeData.es:productRevision": "vsDataSwItemProductRevision"
+        "col.xn:attributes.es:vsDataSwItem.es:administrativeData.es:productionDate": "vsDataSwItemProductDate"
+        "col.xn:attributes.es:vsDataSwItem.es:consistsOf": "vsDataSwItemConsistsOf"
+        "col.xn:attributes.es:vsDataSwItem.es:swItemId": "vsDataSwItemSwItemId"
+        "col.xn:attributes.es:vsDataSwItem.es:userLabel": "vsDataSwItemUserLabel"
